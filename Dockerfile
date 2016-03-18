@@ -25,9 +25,3 @@ RUN rmdir /var/lib/postgresql
 RUN rmdir /var/log/postgresql
 
 RUN userdel postgres
-
-COPY entry.py /entry.py
-# COPY postgresql.conf /usr/share/postgresql/$PG_MAJOR/postgresql.conf.sample
-# COPY pg_hba.conf /usr/share/postgresql/$PG_MAJOR/pg_hba.conf.sample
-COPY postgresql.conf /postgresql.conf
-COPY pg_hba.conf /pg_hba.conf

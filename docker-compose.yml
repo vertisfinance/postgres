@@ -1,4 +1,5 @@
 version: "2"
+
 services:
     data:
         image: vertisfinance/baseimage
@@ -6,15 +7,31 @@ services:
         command: start
         volumes:
             - /var/lib/data
+            - ./runutils.py:/usr/local/lib/python3.5/site-packages/runutils.py
+            - ./data_entry.py:/entry.py
+        entrypoint: ["python3", "entry.py"]
+        command: start
 
     postgres:
         image: vertisfinance/postgres
         hostname: postgres-example
-        command: start
         volumes_from:
             - data
+        volumes:
+            - ./postgres_entry.py:/entry.py
+            - ./pg_hba.conf:/pg_hba.conf
+            - ./postgresql.conf:/postgresql.conf
+        entrypoint: ["python3", "entry.py"]
         environment:
             USER_NAME: postgres
             USER_ID: 5432
             PGDATA: /var/lib/data/pgdata
             SOCKET_DIR: /var/lib/data/sock
+            SEMAPHORE: /var/lib/data/semaphore/postgres.semaphore
+            MAIN_USER_PWD: unsafe!change
+            DB_PASSWORD_OTHER_USER: otheruser-pass
+            DB_PASSWORD_ANOTHERUSER: anotheruser-pass
+            DB_OWNER_OTHERDB: otheruser
+        command: start
+        ports:
+            - "5432:5432"
