@@ -1,0 +1,20 @@
+version: "2"
+services:
+    data:
+        image: vertisfinance/baseimage
+        hostname: data
+        command: start
+        volumes:
+            - /var/lib/data
+
+    postgres:
+        image: vertisfinance/postgres
+        hostname: postgres-example
+        command: start
+        volumes_from:
+            - data
+        environment:
+            USER_NAME: postgres
+            USER_ID: 5432
+            PGDATA: /var/lib/data/pgdata
+            SOCKET_DIR: /var/lib/data/sock
