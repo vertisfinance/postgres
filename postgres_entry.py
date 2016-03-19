@@ -42,6 +42,11 @@ def running_db():
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE)
 
+    import time
+    time.sleep(1)
+    import psycopg2
+    psycopg2.connect()
+
     while True:
         logline = subproc.stderr.readline()
         click.echo(logline)
@@ -61,19 +66,6 @@ def running_db():
             click.echo('Waiting for database to stop...')
             subproc.wait()
 
-    # try:
-    #     o, e = subproc1.communicate(timeout=5)
-    #     click.echo('subproc1 terminated within 5 seconds.')
-    # except subprocess.TimeoutExpired:
-    #     subproc2 = subprocess.Popen(
-    #         START_POSTGRES,
-    #         preexec_fn=setuser(USER_NAME),
-    #         stdout=subprocess.PIPE,
-    #         stderr=subprocess.PIPE)
-    #     for i in range(10):
-    #         logline = subproc2.stderr.readline()
-    #         click.echo(b'subproc2: ' + logline)
-    #
     # subproc = None
     # if not os.path.isfile(os.path.join(PGDATA, 'postmaster.pid')):
     #     subproc = subprocess.Popen(
