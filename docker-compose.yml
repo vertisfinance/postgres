@@ -29,7 +29,7 @@ services:
             SOCKET_DIR: /var/lib/data/sock
             SEMAPHORE: /var/lib/data/semaphore/postgres.semaphore
             MAIN_USER_PWD: unsafe!change
-            DB_PASSWORD_OTHER_USER: otheruser-pass
+            DB_PASSWORD_OTHERUSER: otheruser-pass
             DB_PASSWORD_ANOTHERUSER: anotheruser-pass
             DB_OWNER_OTHERDB: otheruser
         command: start

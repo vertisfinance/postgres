@@ -5,6 +5,7 @@ import hashlib
 from contextlib import contextmanager
 
 import click
+import psycopg2
 
 from runutils import (runbash, ensure_user, get_user_ids,
                       getvar, ensure_dir, call, copyfile, substitute,
@@ -27,6 +28,8 @@ if SEMAPHORE:
     SEMAPHORE_PARENT = os.path.split(SEMAPHORE)[0]
 else:
     SEMAPHORE_PARENT = None
+CONN_STR = "host='%s' dbname='postgres' user=%s password='%s'"
+CONN_STR = CONN_STR % (SOCKET_DIR, USER_NAME, MAIN_USER_PWD)
 
 
 @contextmanager
@@ -36,27 +39,29 @@ def running_db():
     inside the with statement can execute command against it.
     """
 
-    subproc = subprocess.Popen(
-        START_POSTGRES,
-        preexec_fn=setuser(USER_NAME),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE)
+    subproc = None
+    if not os.path.isfile(os.path.join(PGDATA, 'postmaster.pid')):
+        click.echo('Starting the dtabase...')
+        subproc = subprocess.Popen(
+            START_POSTGRES,
+            preexec_fn=setuser(USER_NAME),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
 
-    import time
-    time.sleep(1)
-    import psycopg2
-    psycopg2.connect()
+        click.echo('Waiting for database to start...')
+        while True:
+            logline = subproc.stderr.readline()
+            if logline.find(b'ready to accept connections') > -1:
+                break
 
-    while True:
-        logline = subproc.stderr.readline()
-        click.echo(logline)
-        if logline.find(b'lock file "postmaster.pid" already exists') > -1:
-            subproc.wait()
-            subproc = None
-            break
-        if logline.find(b'ready to accept connections') > -1:
-            click.echo('Database is now running ...')
-            break
+    try:
+        conn = psycopg2.connect(CONN_STR)
+    except:
+        click.echo('postmaster.pid existed or the database '
+                   'started, but could not connect.')
+        raise Exception('Database could not be started.')
+    else:
+        conn.close()
 
     try:
         yield
@@ -65,28 +70,6 @@ def running_db():
             subproc.send_signal(signal.SIGTERM)
             click.echo('Waiting for database to stop...')
             subproc.wait()
-
-    # subproc = None
-    # if not os.path.isfile(os.path.join(PGDATA, 'postmaster.pid')):
-    #     subproc = subprocess.Popen(
-    #         START_POSTGRES,
-    #         preexec_fn=setuser(USER_NAME),
-    #         stdout=subprocess.PIPE,
-    #         stderr=subprocess.PIPE)
-    #
-    #     click.echo('Waiting for database to start...')
-    #     while True:
-    #         logline = subproc.stderr.readline()
-    #         if logline.find(b'ready to accept connections') > -1:
-    #             break
-    #
-    # try:
-    #     yield
-    # finally:
-    #     if subproc:
-    #         subproc.send_signal(signal.SIGTERM)
-    #         click.echo('Waiting for database to stop...')
-    #         subproc.wait()
 
 
 def psqlparams(command=None, database='postgres'):
@@ -143,29 +126,28 @@ def _createdb(dbname, owner):
                 user=USER_NAME)
 
 
-@click.group()
-def run():
-    ensure_user(USER_NAME, USER_ID, GROUP_NAME, GROUP_ID)
+def _init(stopper):
     ensure_dir(PGDATA_PARENT, permission_str='777')
     ensure_dir(SOCKET_DIR, permission_str='777')
     if SEMAPHORE_PARENT:
         ensure_dir(SEMAPHORE_PARENT, permission_str='777')
 
-    copyfile('/postgresql.conf', CONF_FILE,
-             owner=USER_NAME, group=GROUP_NAME, permission_str='400')
-    copyfile('/pg_hba.conf', HBA_FILE,
-             owner=USER_NAME, group=GROUP_NAME, permission_str='400')
-
-    substitute(CONF_FILE, {'SOCKET_DIR': SOCKET_DIR, 'HBA_FILE': HBA_FILE})
+    if stopper.stopped:
+        return
 
     if not os.path.isdir(PGDATA):
         call(['initdb'], user=USER_NAME)
+
+    if stopper.stopped:
+        return
 
     with running_db():
         # set password for admin user
         _setpwd(USER_NAME, MAIN_USER_PWD)
 
         for k, v in os.environ.items():
+            if stopper.stopped:
+                return
             prefix = 'DB_PASSWORD_'
             if k.startswith(prefix):
                 username = k[len(prefix):].lower()
@@ -175,6 +157,9 @@ def run():
                 except:
                     _setpwd(username, password)
 
+        for k, v in os.environ.items():
+            if stopper.stopped:
+                return
             prefix = 'DB_OWNER_'
             if k.startswith(prefix):
                 dbname = k[len(prefix):].lower()
@@ -185,6 +170,17 @@ def run():
                     pass
 
 
+@click.group()
+def run():
+    ensure_user(USER_NAME, USER_ID, GROUP_NAME, GROUP_ID)
+    copyfile('/postgresql.conf', CONF_FILE,
+             owner=USER_NAME, group=GROUP_NAME, permission_str='400')
+    copyfile('/pg_hba.conf', HBA_FILE,
+             owner=USER_NAME, group=GROUP_NAME, permission_str='400')
+
+    substitute(CONF_FILE, {'SOCKET_DIR': SOCKET_DIR, 'HBA_FILE': HBA_FILE})
+
+
 @run.command()
 @click.argument('user', default=USER_NAME)
 def bash(user):
@@ -192,8 +188,34 @@ def bash(user):
 
 
 @run.command()
+def repair():
+    """Rapair stale lock file (postmaster.pid) situations."""
+    subproc = subprocess.Popen(
+        START_POSTGRES,
+        preexec_fn=setuser(USER_NAME),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE)
+
+    success = False
+    for i in range(10):
+        logline = subproc.stderr.readline()
+        if logline.find(b'ready to accept connections') > -1:
+            success = True
+            break
+
+    subproc.send_signal(signal.SIGTERM)
+    subproc.wait()
+
+    if success:
+        click.echo('Success.')
+    else:
+        click.echo('Could not repair :(')
+
+
+@run.command()
 def start():
-    run_daemon(START_POSTGRES, user=USER_NAME, semaphore=SEMAPHORE)
+    run_daemon(START_POSTGRES, user=USER_NAME,
+               semaphore=SEMAPHORE, initfunc=_init)
 
 
 if __name__ == '__main__':

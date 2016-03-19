@@ -6,6 +6,7 @@ import subprocess
 import signal
 import pwd
 import shutil
+import traceback
 
 import click
 
@@ -90,10 +91,10 @@ def run_cmd(args, message=None, input=None, user=None, printoutput=False):
         except subprocess.CalledProcessError as e:
             if message:
                 click.secho('✘', fg='red')
+            output = e.output.decode('utf-8')
             if printoutput:
-                output = e.output.decode('utf-8')
                 click.secho(output, fg='red')
-            raise
+            raise Exception(output)
         else:
             if message:
                 click.secho('✔', fg='green')
@@ -164,7 +165,12 @@ def run_daemon(params, stdout=None, stderr=None,
         waitfunc(stopper)
 
     if initfunc:
-        initfunc(stopper)
+        try:
+            initfunc(stopper)
+        except:
+            click.echo('Exception in initfunc')
+            click.echo(traceback.format_exc())
+            stopper.stopped = True
 
     _setuser = setuser(user) if user else None
     if not stopper.stopped:
