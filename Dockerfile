@@ -32,7 +32,7 @@ RUN set -ex \
         libpq-dev \
     ' \
     && apt-get update && apt-get install -y $buildDeps --no-install-recommends && rm -rf /var/lib/apt/lists/* \
-    && pip3 install --no-cache-dir psycopg2 \
+    && pip3 install --no-cache-dir psycopg2==2.6.1 \
     && apt-get purge -y --auto-remove $buildDeps \
     && rm -rf /var/lib/apt/lists/*
 
