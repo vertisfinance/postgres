@@ -7,10 +7,9 @@ services:
         command: start
         volumes:
             - /var/lib/data
-            - ./runutils.py:/usr/local/lib/python3.5/site-packages/runutils.py
-            - ./data_entry.py:/entry.py
         entrypoint: ["python3", "entry.py"]
         command: start
+        stop_signal: SIGINT
 
     postgres:
         image: vertisfinance/postgres
@@ -18,7 +17,6 @@ services:
         volumes_from:
             - data
         volumes:
-            - ./postgres_entry.py:/entry.py
             - ./pg_hba.conf:/pg_hba.conf
             - ./postgresql.conf:/postgresql.conf
         entrypoint: ["python3", "entry.py"]

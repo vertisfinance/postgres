@@ -35,3 +35,5 @@ RUN set -ex \
     && pip3 install --no-cache-dir psycopg2 \
     && apt-get purge -y --auto-remove $buildDeps \
     && rm -rf /var/lib/apt/lists/*
+
+COPY entry.py /entry.py
