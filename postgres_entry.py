@@ -1,15 +1,18 @@
 import os
+import sys
 import subprocess
 import signal
 import hashlib
 from contextlib import contextmanager
+import re
+import time
 
 import click
 import psycopg2
 
 from runutils import (runbash, ensure_user, get_user_ids,
                       getvar, ensure_dir, call, copyfile, substitute,
-                      run_daemon, setuser, run_cmd)
+                      run_daemon, setuser, run_cmd, Stopper)
 
 
 USER_NAME, USER_ID, GROUP_NAME, GROUP_ID = get_user_ids('postgres', 5432)
@@ -24,6 +27,7 @@ CONF_FILE = CONF_BASE % 'postgresql.conf'
 HBA_FILE = CONF_BASE % 'pg_hba.conf'
 START_POSTGRES = ['postgres', '-c', 'config_file=%s' % CONF_FILE]
 SEMAPHORE = getvar('SEMAPHORE', required=False)
+BACKUP_DIR = getvar('BACKUP_DIR')
 if SEMAPHORE:
     SEMAPHORE_PARENT = os.path.split(SEMAPHORE)[0]
 else:
@@ -115,8 +119,6 @@ def _setpwd(username, password):
 
 
 def _createdb(dbname, owner):
-    """Creates a database."""
-
     sql = "CREATE DATABASE %s WITH ENCODING 'UTF8' OWNER %s"
     sql = sql % (dbname, owner)
 
@@ -126,9 +128,80 @@ def _createdb(dbname, owner):
                 user=USER_NAME)
 
 
+def _createschema(schemaname, dbname, owner):
+    sql = "CREATE SCHEMA %s AUTHORIZATION %s"
+    sql = sql % (schemaname, owner)
+
+    with running_db():
+        run_cmd(psqlparams(sql, database=dbname),
+                'Creating schema %s' % schemaname,
+                user=USER_NAME)
+
+
+def _backup(backupname, user, database):
+    """Backs up the database with pg_dump."""
+
+    # We have some restrictions on the backupname
+    if re.match('[a-z0-9_-]+$', backupname) is None:
+        click.secho('Invalid backupname.', fg='red')
+        sys.exit(1)
+
+    # The file must not exist
+    filename = os.path.join(BACKUP_DIR, backupname)
+    if os.path.isfile(filename):
+        click.secho('File %s exists.' % filename, fg='red')
+        sys.exit(1)
+
+    params = ['pg_dump', '-h', SOCKET_DIR, '-O', '-x', '-U', user, database]
+
+    with open(filename, 'w') as f, running_db():
+        ret = subprocess.call(
+            params, stdout=f, preexec_fn=setuser(USER_NAME))
+
+    os.chown(filename, USER_ID, GROUP_ID)
+
+    if ret == 0:
+        click.secho('Successful backup: %s' % filename, fg='green')
+    else:
+        try:
+            os.remove(filename)
+        except:
+            pass
+        click.secho('Backup (%s) failed' % filename, fg='red')
+        sys.exit(1)
+
+
+def _restore(backupname, user, database, do_backup=True):
+    """
+    Recreates the database from a backup file. Will drop the
+    original database.
+    Creates a backup if do_backup is True.
+    """
+
+    filename = os.path.join(BACKUP_DIR, backupname)
+    if not os.path.isfile(filename):
+        click.secho('File %s does not exist.' % filename, fg='red')
+        sys.exit(1)
+
+    with running_db():
+        if do_backup:
+            backupname = 'pre_restore_%s' % int(time.time())
+            _backup(backupname, user, database)
+
+        sql = 'DROP DATABASE %s;' % database
+
+        run_cmd(psqlparams(sql),
+                message='Dropping database %s' % database,
+                user=USER_NAME)
+
+        _createdb(database, user)
+
+        run_cmd(psqlparams() + ['-f', filename],
+                message='Restoring',
+                user=USER_NAME)
+
+
 def _init(stopper):
-    ensure_dir(PGDATA_PARENT, permission_str='777')
-    ensure_dir(SOCKET_DIR, permission_str='777')
     if SEMAPHORE_PARENT:
         ensure_dir(SEMAPHORE_PARENT, permission_str='777')
 
@@ -173,6 +246,10 @@ def _init(stopper):
 @click.group()
 def run():
     ensure_user(USER_NAME, USER_ID, GROUP_NAME, GROUP_ID)
+    ensure_dir(PGDATA_PARENT, permission_str='777')
+    ensure_dir(SOCKET_DIR, permission_str='777')
+    ensure_dir(BACKUP_DIR, permission_str='777')
+
     copyfile('/postgresql.conf', CONF_FILE,
              owner=USER_NAME, group=GROUP_NAME, permission_str='400')
     copyfile('/pg_hba.conf', HBA_FILE,
@@ -210,6 +287,60 @@ def repair():
         click.echo('Success.')
     else:
         click.echo('Could not repair :(')
+
+
+@run.command()
+def init():
+    _init(Stopper())
+
+
+@run.command()
+@click.option('--username', prompt=True)
+@click.option('--password', prompt=True,
+              hide_input=True, confirmation_prompt=True)
+def createuser(username, password):
+    _createuser(username, password)
+
+
+@run.command()
+@click.option('--username', prompt=True)
+@click.option('--password', prompt=True,
+              hide_input=True, confirmation_prompt=True)
+def setpwd(username, password):
+    _setpwd(username, password)
+
+
+@run.command()
+@click.option('--dbname', prompt=True)
+@click.option('--owner', prompt=True)
+def createdb(dbname, owner):
+    _createdb(dbname, owner)
+
+
+@run.command()
+@click.option('--schemaname', prompt=True)
+@click.option('--dbname', prompt=True)
+@click.option('--owner', prompt=True)
+def createschema(schemaname, dbname, owner):
+    _createschema(schemaname, dbname, owner)
+
+
+@run.command()
+@click.option('--backupname', prompt=True)
+@click.option('--user', prompt=True)
+@click.option('--database', prompt=True)
+@click.option('--do_backup', is_flag=True,
+              prompt='Should we make backup?', default=False)
+def restore(backupname, user, database, do_backup):
+    _restore(backupname, user, database, do_backup)
+
+
+@run.command()
+@click.option('--backupname', prompt=True)
+@click.option('--user', prompt=True)
+@click.option('--database', prompt=True)
+def backup(backupname, user, database):
+    _backup(backupname, user, database)
 
 
 @run.command()

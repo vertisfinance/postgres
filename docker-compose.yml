@@ -27,6 +27,7 @@ services:
             USER_ID: 5432
             PGDATA: /var/lib/data/pgdata
             SOCKET_DIR: /var/lib/data/sock
+            BACKUP_DIR: /var/lib/data/backup
             SEMAPHORE: /var/lib/data/semaphore/postgres.semaphore
             MAIN_USER_PWD: unsafe!change
             DB_PASSWORD_OTHERUSER: otheruser-pass

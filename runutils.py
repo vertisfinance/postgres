@@ -240,7 +240,7 @@ def substitute(filename, mapping):
 
 def call(params, user=None):
     preexec_fn = setuser(user) if user else None
-    subprocess.call(params, preexec_fn=preexec_fn)
+    return subprocess.call(params, preexec_fn=preexec_fn)
 
 
 def runbash(user):
